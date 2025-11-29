@@ -1,0 +1,430 @@
+<!-- Font Awesome Icons -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+{% liquid
+assign all_devices = ""
+assign current_time = 'now' | date: '%s'
+for i in (1..30)
+assign device_key = 'd' | append: i
+assign device_data = [device_key]
+if device_data
+assign fields = device_data | split: '|'
+assign device_obj = '{'
+assign device_obj = device_obj | append: '"id":' | append: i | append: ','
+assign device_obj = device_obj | append: '"name":"' | append: fields[0] | append: '",'
+assign device_obj = device_obj | append: '"os":"' | append: fields[1] | append: '",'
+assign device_obj = device_obj | append: '"user_count":' | append: fields[2] | append: ','
+assign device_obj = device_obj | append: '"users":"' | append: fields[3] | append: '",'
+assign device_obj = device_obj | append: '"cpu":' | append: fields[4] | append: ','
+assign device_obj = device_obj | append: '"cores":' | append: fields[5] | append: ','
+assign device_obj = device_obj | append: '"freq":' | append: fields[6] | append: ','
+assign device_obj = device_obj | append: '"load":"' | append: fields[7] | append: '",'
+assign device_obj = device_obj | append: '"mem_used":' | append: fields[8] | append: ','
+assign device_obj = device_obj | append: '"mem_total":' | append: fields[9] | append: ','
+assign device_obj = device_obj | append: '"disk_used":' | append: fields[10] | append: ','
+assign device_obj = device_obj | append: '"disk_total":' | append: fields[11] | append: ','
+assign device_obj = device_obj | append: '"temp":' | append: fields[12] | append: ','
+assign device_obj = device_obj | append: '"battery":' | append: fields[13] | append: ','
+assign device_obj = device_obj | append: '"charging":' | append: fields[14] | append: ','
+assign device_obj = device_obj | append: '"gpu":"' | append: fields[15] | append: '",'
+assign device_obj = device_obj | append: '"gpu_temp":' | append: fields[16] | append: ','
+assign device_obj = device_obj | append: '"gpu_util":' | append: fields[17] | append: ','
+assign device_obj = device_obj | append: '"network":' | append: fields[18] | append: ','
+assign device_obj = device_obj | append: '"connection":"' | append: fields[19] | append: '",'
+assign device_obj = device_obj | append: '"ip":"' | append: fields[20] | append: '",'
+assign device_obj = device_obj | append: '"uptime":' | append: fields[21] | append: ','
+assign device_obj = device_obj | append: '"timestamp":' | append: fields[22]
+assign device_obj = device_obj | append: '}'
+if all_devices != ""
+assign all_devices = all_devices | append: ','
+endif
+assign all_devices = all_devices | append: device_obj
+endif
+endfor
+assign devices_json = '[' | append: all_devices | append: ']'
+assign devices = devices_json | parse_json
+%}
+
+<style>
+  .device-card {
+    border: 2px solid #000;
+    padding: 12px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+  
+  .device-card--compact {
+    padding: 8px;
+  }
+  
+  .device-card--stale {
+    opacity: 0.5;
+    background: repeating-linear-gradient(
+      45deg,
+      transparent,
+      transparent 10px,
+      rgba(0, 0, 0, 0.03) 10px,
+      rgba(0, 0, 0, 0.03) 20px
+    );
+  }
+  
+  .stale-badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    font-size: 8px;
+    text-transform: uppercase;
+    opacity: 0.6;
+    background: #fff;
+    padding: 2px 4px;
+    border: 1px solid #000;
+  }
+  
+  .device-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 2px;
+  }
+  
+  .device-header--compact {
+    margin-bottom: 6px;
+  }
+  
+  .device-icon {
+    font-size: 20px;
+  }
+  
+  .device-icon--compact {
+    font-size: 16px;
+  }
+  
+  .device-name {
+    font-family: NicoPups;
+    font-size: 18px;
+    font-weight: bold;
+  }
+  
+  .device-name--compact {
+    font-size: 14px;
+  }
+  
+  .device-meta {
+    font-size: 10px;
+    opacity: 0.6;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  
+  .device-meta--compact {
+    font-size: 8px;
+    margin-bottom: 6px;
+  }
+  
+  .metric-row {
+    margin-bottom: 8px;
+  }
+  
+  .metric-row--compact {
+    margin-bottom: 4px;
+  }
+  
+  .metric-icon {
+    margin-right: 4px;
+    font-size: 10px;
+  }
+  
+  .cpu-details {
+    font-size: 9px;
+    opacity: 0.7;
+    margin-top: 2px;
+    display: flex;
+    justify-content: space-between;
+  }
+  
+  .info-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: auto;
+    padding-top: 10px;
+    border-top: 1px solid #000;
+    font-size: 10px;
+  }
+  
+  .info-grid--compact {
+    gap: 4px;
+    padding-top: 6px;
+  }
+  
+  .info-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+  
+  .info-value {
+    font-family: NicoClean;
+    font-size: 12px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  
+  .info-value--compact {
+    font-size: 10px;
+  }
+  
+  .info-label {
+    opacity: 0.6;
+    text-transform: uppercase;
+    font-size: 8px;
+  }
+  
+  .info-label--compact {
+    font-size: 7px;
+  }
+  
+  .ip-footer {
+    margin-top: 8px;
+    font-size: 9px;
+    opacity: 0.5;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+  }
+</style>
+
+{% template device %}
+{% assign mem_pct = device.mem_used | times: 100 | divided_by: device.mem_total %}
+{% assign disk_pct = device.disk_used | times: 100 | divided_by: device.disk_total %}
+{% assign load_parts = device.load | split: ',' %}
+
+{% comment %} Check if device is stale (no update in 2 hours = 7200 seconds) {% endcomment %}
+{% assign current_time = 'now' | date: '%s' %}
+{% assign time_diff = current_time | minus: device.timestamp %}
+{% assign is_stale = false %}
+{% if time_diff > 7200 %}
+  {% assign is_stale = true %}
+{% endif %}
+
+{% comment %} Detect device type by OS {% endcomment %}
+{% assign device_icon = 'fa-desktop' %}
+{% if device.os contains 'Android' %}
+  {% assign device_icon = 'fa-mobile-screen' %}
+{% elsif device.battery > 0 %}
+  {% assign device_icon = 'fa-laptop' %}
+{% elsif device.os contains 'Server' or device.os contains 'Debian' or device.user_count == 0 %}
+  {% assign device_icon = 'fa-server' %}
+{% endif %}
+
+<div class="device-card {% if is_stale %}device-card--stale{% endif %} {% if compact %}device-card--compact{% endif %}">
+  {% if is_stale %}
+  <div class="stale-badge">
+    <i class="fa-solid fa-clock"></i>
+    {% assign hours_ago = time_diff | divided_by: 3600 %}
+    {% if hours_ago > 24 %}
+      {{ hours_ago | divided_by: 24 }}d
+    {% else %}
+      {{ hours_ago }}h
+    {% endif %}
+  </div>
+  {% endif %}
+  
+  <div class="device-header {% if compact %}device-header--compact{% endif %}">
+    <i class="fa-solid {{ device_icon }} device-icon {% if compact %}device-icon--compact{% endif %}"></i>
+    <div class="device-name {% if compact %}device-name--compact{% endif %}">{{ device.name }}</div>
+  </div>
+  
+  {% unless compact %}
+  <div class="device-meta">
+    <i class="fa-brands fa-linux" style="font-size: 12px;"></i>
+    {{ device.os }} · 
+    <i class="fa-solid fa-users" style="font-size: 10px;"></i>
+    {{ device.user_count }} {% if device.user_count == 1 %}user{% else %}users{% endif %}
+    {% if device.user_count > 0 and device.users != 'none' %}({{ device.users }}){% endif %}
+  </div>
+  {% endunless %}
+  
+  <!-- CPU -->
+  <div class="metric-row {% if compact %}metric-row--compact{% endif %}">
+    <div class="progress-bar progress-bar--small">
+      <div class="content">
+        <span class="label"><i class="fa-solid fa-microchip metric-icon"></i>CPU</span>
+        <span class="value value--xxsmall">{{ device.cpu }}%</span>
+      </div>
+      <div class="track">
+        <div class="fill" style="width: {{ device.cpu }}%;"></div>
+      </div>
+    </div>
+    {% unless compact %}
+    <div class="cpu-details">
+      <span>{{ device.cores }} cores @ {{ device.freq }} MHz</span>
+      <span>Load: {{ load_parts[0] }}</span>
+    </div>
+    {% endunless %}
+  </div>
+  
+  <!-- Memory -->
+  <div class="metric-row {% if compact %}metric-row--compact{% endif %}">
+    <div class="progress-bar progress-bar--small progress-bar--emphasis-2">
+      <div class="content">
+        <span class="label"><i class="fa-solid fa-memory metric-icon"></i>RAM</span>
+        <span class="value value--xxsmall">{{ device.mem_used }}/{{ device.mem_total }}GB</span>
+      </div>
+      <div class="track">
+        <div class="fill" style="width: {{ mem_pct }}%;"></div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Disk -->
+  <div class="metric-row {% if compact %}metric-row--compact{% endif %}">
+    <div class="progress-bar progress-bar--small {% if disk_pct > 90 %}progress-bar--emphasis-3{% endif %}">
+      <div class="content">
+        <span class="label"><i class="fa-solid fa-hard-drive metric-icon"></i>Disk</span>
+        <span class="value value--xxsmall">{{ device.disk_used }}/{{ device.disk_total }}GB</span>
+      </div>
+      <div class="track">
+        <div class="fill" style="width: {{ disk_pct }}%;"></div>
+      </div>
+    </div>
+  </div>
+  
+  {% if device.battery > 0 and compact == false %}
+  <!-- Battery (only in full mode) -->
+  <div class="metric-row">
+    <div class="progress-bar progress-bar--small {% if device.battery < 20 and device.charging == 0 %}progress-bar--emphasis-3{% endif %}">
+      <div class="content">
+        <span class="label">
+          <i class="fa-solid {% if device.charging == 1 %}fa-bolt{% elsif device.battery > 75 %}fa-battery-full{% elsif device.battery > 50 %}fa-battery-three-quarters{% elsif device.battery > 25 %}fa-battery-half{% else %}fa-battery-quarter{% endif %} metric-icon"></i>Battery
+        </span>
+        <span class="value value--xxsmall">{{ device.battery }}% {% if device.charging == 1 %}⚡{% endif %}</span>
+      </div>
+      <div class="track">
+        <div class="fill" style="width: {{ device.battery }}%;"></div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+  
+  {% if device.gpu != 'none' and device.gpu_util > 0 and compact == false %}
+  <!-- GPU (only in full mode) -->
+  <div class="metric-row">
+    <div class="progress-bar progress-bar--small {% if device.gpu_util > 80 %}progress-bar--emphasis-2{% endif %}">
+      <div class="content">
+        <span class="label"><i class="fa-solid fa-display metric-icon"></i>GPU</span>
+        <span class="value value--xxsmall">{{ device.gpu_util }}%</span>
+      </div>
+      <div class="track">
+        <div class="fill" style="width: {{ device.gpu_util }}%;"></div>
+      </div>
+    </div>
+    <div class="cpu-details">
+      <span>{{ device.gpu }}</span>
+      <span><i class="fa-solid fa-fire"></i> {{ device.gpu_temp }}°C</span>
+    </div>
+  </div>
+  {% endif %}
+  
+  <!-- Additional Info -->
+  <div class="info-grid {% if compact %}info-grid--compact{% endif %}">
+    <div class="info-item">
+      <div class="info-value {% if compact %}info-value--compact{% endif %}">
+        <i class="fa-solid fa-temperature-half"></i>
+        {{ device.temp }}°C
+      </div>
+      <div class="info-label {% if compact %}info-label--compact{% endif %}">Temp</div>
+    </div>
+    
+    {% if compact %}
+    <!-- Compact: Show uptime instead of network -->
+    <div class="info-item">
+      <div class="info-value info-value--compact">
+        <i class="fa-solid fa-clock-rotate-left"></i>
+        {% assign uptime_hours = device.uptime | divided_by: 3600 %}
+        {% if uptime_hours > 24 %}
+          {{ uptime_hours | divided_by: 24 }}d
+        {% else %}
+          {{ uptime_hours }}h
+        {% endif %}
+      </div>
+      <div class="info-label info-label--compact">Uptime</div>
+    </div>
+    {% else %}
+    <!-- Full: Show all 4 stats -->
+    <div class="info-item">
+      <div class="info-value">
+        <i class="fa-solid fa-arrow-down-up-across-line"></i>
+        {{ device.network }}
+      </div>
+      <div class="info-label">KB/s</div>
+    </div>
+    
+    <div class="info-item">
+      <div class="info-value">
+        <i class="fa-solid fa-clock-rotate-left"></i>
+        {% assign uptime_hours = device.uptime | divided_by: 3600 %}
+        {% if uptime_hours > 24 %}
+          {{ uptime_hours | divided_by: 24 }}d
+        {% else %}
+          {{ uptime_hours }}h
+        {% endif %}
+      </div>
+      <div class="info-label">Uptime</div>
+    </div>
+    
+    <div class="info-item">
+      <div class="info-value" style="font-size: 10px;">
+        {% assign wifi_parts = device.connection | split: ':' %}
+        {% if wifi_parts[0] == 'wifi' %}
+          <i class="fa-solid fa-wifi"></i>
+          {{ wifi_parts[1] }}
+        {% else %}
+          <i class="fa-solid fa-ethernet"></i>
+          LAN
+        {% endif %}
+      </div>
+      <div class="info-label">Network</div>
+    </div>
+    {% endif %}
+  </div>
+  
+  {% unless compact %}
+  <!-- IP Address (only in full mode) -->
+  <div class="ip-footer">
+    <i class="fa-solid fa-network-wired"></i>
+    {{ device.ip }}
+  </div>
+  {% endunless %}
+</div>
+{% endtemplate %}
+
+{% template display_devices %}
+
+
+<div class="layout">
+  <div class="grid grid--auto-fill" style="--min-column-width: {% if compact %}180px{% else %}240px{% endif %};">
+    {% for device in devices %}
+    {% render "device", device: device, compact: compact %}
+    {% endfor %}
+  </div>
+</div>
+<div class="title_bar">
+  <img class="image" src="https://cdnjs.cloudflare.com/ajax/libs/simple-icons/11.8.0/grafana.svg" style="filter: invert(1);">
+  <span class="title">Device Health Monitor</span>
+  <span class="instance">
+    <i class="fa-solid fa-server"></i>
+    {{ devices.size }} {% if devices.size == 1 %}Device{% else %}Devices{% endif %}
+  </span>
+</div>
+{% endtemplate %}
+

@@ -41,8 +41,9 @@ if ! [[ "$DEVICE_ID" =~ ^[0-9]+$ ]] || [ "$DEVICE_ID" -lt 1 ] || [ "$DEVICE_ID" 
     exit 1
 fi
 
-read -p "Enter device name/label (default: $(hostname)): " DEVICE_NAME
-DEVICE_NAME=${DEVICE_NAME:-$(hostname)}
+DEFAULT_HOSTNAME=$(cat /proc/sys/kernel/hostname 2>/dev/null || uname -n)
+read -p "Enter device name/label (default: $DEFAULT_HOSTNAME): " DEVICE_NAME
+DEVICE_NAME=${DEVICE_NAME:-$DEFAULT_HOSTNAME}
 
 # Get update interval with CORRECT rate limit calculations
 echo ""
@@ -243,7 +244,7 @@ else
 fi
 
 # IP Address
-IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+IP=$(ip -4 addr show scope global | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
 IP=${IP:-127.0.0.1}
 
 # Uptime in seconds

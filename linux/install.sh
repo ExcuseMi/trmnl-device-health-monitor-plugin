@@ -150,10 +150,20 @@ MEM_USED_MB=$(echo $MEM_INFO | awk '{print $3}')
 MEM_TOTAL=$(awk "BEGIN {printf \"%.0f\", $MEM_TOTAL_MB / 1024}")
 MEM_USED=$(awk "BEGIN {printf \"%.0f\", $MEM_USED_MB / 1024}")
 
-# Disk - used/total in GiB (binary)
-DISK_INFO=$(df -BG / | tail -1)
-DISK_TOTAL=$(echo $DISK_INFO | awk '{print $2}' | tr -d 'G')
-DISK_USED=$(echo $DISK_INFO | awk '{print $3}' | tr -d 'G')
+# Disk - used/total in GB (find largest partition, excluding special filesystems)
+DISK_INFO=$(df -BG --output=size,used,target | \
+    grep -v "^Size" | \
+    grep -v "/dev\|/sys\|/proc\|/run\|/boot\|/snap" | \
+    sort -h -r | \
+    head -1)
+
+if [ -z "$DISK_INFO" ]; then
+    # Fallback to root if nothing else found
+    DISK_INFO=$(df -BG / | tail -1)
+fi
+
+DISK_TOTAL=$(echo $DISK_INFO | awk '{print $1}' | tr -d 'G')
+DISK_USED=$(echo $DISK_INFO | awk '{print $2}' | tr -d 'G')
 
 # Temperature
 TEMP=0

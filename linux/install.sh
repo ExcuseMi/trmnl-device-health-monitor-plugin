@@ -1,15 +1,62 @@
 #!/bin/bash
+set -euo pipefail
 
 echo "=== TRMNL Device Health Monitor - Linux Installer ==="
 
+# Ensure ~/.local/bin is in PATH for local jq
+export PATH="$HOME/.local/bin:$PATH"
+
+# Helper: detect Steam Deck / SteamOS
+is_steam_deck() {
+    if [ -f /etc/os-release ]; then
+        if grep -qi "steam" /etc/os-release; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# Helper: install jq locally (no root)
+install_jq_local() {
+    if command -v jq &>/dev/null; then
+        echo "jq already available"
+        return 0
+    fi
+
+    mkdir -p "$HOME/.local/bin"
+
+    # Prefer curl, then wget
+    if command -v curl &>/dev/null; then
+        echo "Downloading jq to $HOME/.local/bin/jq (using curl)..."
+        curl -fsSL -o "$HOME/.local/bin/jq" "https://github.com/stedolan/jq/releases/latest/download/jq-linux64" || {
+            echo "Failed to download jq with curl"
+            return 1
+        }
+    elif command -v wget &>/dev/null; then
+        echo "Downloading jq to $HOME/.local/bin/jq (using wget)..."
+        wget -qO "$HOME/.local/bin/jq" "https://github.com/stedolan/jq/releases/latest/download/jq-linux64" || {
+            echo "Failed to download jq with wget"
+            return 1
+        }
+    else
+        echo "Neither curl nor wget present to download jq"
+        return 1
+    fi
+
+    chmod +x "$HOME/.local/bin/jq"
+    echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.profile" 2>/dev/null || true
+    echo "jq installed locally"
+    return 0
+}
+
 # Get plugin UUID from argument or prompt
-if [ -n "$1" ]; then
+if [ -n "${1:-}" ]; then
     PLUGIN_UUID="$1"
 else
     read -p "Enter your TRMNL plugin UUID: " PLUGIN_UUID
 fi
 
-# Validate UUID format
+# Validate UUID format (alphanumeric, underscore, dash)
 if [[ ! "$PLUGIN_UUID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
     echo "Error: Invalid plugin UUID format"
     exit 1
@@ -41,7 +88,8 @@ if ! [[ "$DEVICE_ID" =~ ^[0-9]+$ ]] || [ "$DEVICE_ID" -lt 1 ] || [ "$DEVICE_ID" 
     exit 1
 fi
 
-DEFAULT_HOSTNAME=$(cat /proc/sys/kernel/hostname 2>/dev/null || uname -n)
+# Safe hostname fallback (works on Steam Deck / minimal systems)
+DEFAULT_HOSTNAME=$(cat /proc/sys/kernel/hostname 2>/dev/null || uname -n || echo "device")
 read -p "Enter device name/label (default: $DEFAULT_HOSTNAME): " DEVICE_NAME
 DEVICE_NAME=${DEVICE_NAME:-$DEFAULT_HOSTNAME}
 
@@ -69,7 +117,7 @@ fi
 if [[ "$HAS_PREMIUM" =~ ^[Yy]$ ]]; then
     read -p "Select interval (1-5): " INTERVAL_CHOICE
 else
-    read -p "Select interval (1-4): " INTERVAL_CHOICE
+    read -p "Select interval (1-6): " INTERVAL_CHOICE
 fi
 
 if [[ "$HAS_PREMIUM" =~ ^[Yy]$ ]]; then
@@ -86,7 +134,9 @@ else
         1) UPDATE_INTERVAL=300; SLOTS=12; DESC="every 5 minutes" ;;   # 12 req/hr per device
         2) UPDATE_INTERVAL=360; SLOTS=10; DESC="every 6 minutes" ;;   # 10 req/hr per device
         3) UPDATE_INTERVAL=600; SLOTS=6; DESC="every 10 minutes" ;;   # 6 req/hr per device
-        4) UPDATE_INTERVAL=3600; SLOTS=12; DESC="every hour" ;;       # 1 req/hr per device
+        4) UPDATE_INTERVAL=1200; SLOTS=3; DESC="every 20 minutes" ;;  # 3 slots (20m) - matching list
+        5) UPDATE_INTERVAL=1800; SLOTS=6; DESC="every 30 minutes" ;;  # 6 slots
+        6) UPDATE_INTERVAL=3600; SLOTS=12; DESC="every hour" ;;       # 12 slots
         *) UPDATE_INTERVAL=3600; SLOTS=12; DESC="every hour" ;;
     esac
 fi
@@ -95,10 +145,10 @@ fi
 INSTALL_DIR="/opt/trmnl-health"
 LOG_DIR="/var/log/trmnl-health"
 
-# Create directories
-sudo mkdir -p "$INSTALL_DIR"
-sudo mkdir -p "$LOG_DIR"
-cd "$INSTALL_DIR"
+# Create directories (may require sudo)
+sudo mkdir -p "$INSTALL_DIR" || true
+sudo mkdir -p "$LOG_DIR" || true
+cd "$INSTALL_DIR" || exit 1
 
 # Create config file
 sudo tee config.json > /dev/null <<EOF
@@ -113,6 +163,10 @@ EOF
 # Create data collection script
 sudo tee collect.sh > /dev/null <<'COLLECTOR'
 #!/bin/bash
+set -euo pipefail
+
+# Ensure local jq (if present) in PATH
+export PATH="$HOME/.local/bin:$PATH"
 
 CONFIG_FILE="$(dirname "$0")/config.json"
 WEBHOOK_URL=$(jq -r '.webhook_url' "$CONFIG_FILE")
@@ -122,7 +176,7 @@ DEVICE_NAME=$(jq -r '.device_name' "$CONFIG_FILE")
 # OS Information
 if [ -f /etc/os-release ]; then
     . /etc/os-release
-    OS="${NAME} ${VERSION_ID}"
+    OS="${NAME} ${VERSION_ID:-}"
 else
     OS=$(uname -s)
 fi
@@ -136,25 +190,31 @@ if [ "$LOGGED_IN_COUNT" -eq 0 ]; then
 fi
 
 # CPU - usage, cores, frequency
-CPU=$(top -bn1 | grep "Cpu(s)" | sed "s/.*, *\([0-9.]*\)%* id.*/\1/" | awk '{print int(100 - $1)}')
-CPU_CORES=$(nproc)
-CPU_FREQ=$(cat /proc/cpuinfo | grep "cpu MHz" | head -1 | awk '{print int($4)}')
+# Using top to get idle then convert to usage
+if command -v top &>/dev/null; then
+    CPU_IDLE=$(top -bn1 | awk '/Cpu\(s\)/{for(i=1;i<=NF;i++){if($i ~ /id,?$/){print $(i-1); exit}}}')
+    CPU=$((100 - ${CPU_IDLE%.*}))
+else
+    CPU=0
+fi
+CPU_CORES=$(nproc 2>/dev/null || echo 0)
+CPU_FREQ=$(awk -F: '/cpu MHz/{print int($2 + 0); exit}' /proc/cpuinfo 2>/dev/null || echo 0)
 CPU_FREQ=${CPU_FREQ:-0}
 
 # Load average (1min, 5min, 15min)
 LOAD_AVG=$(cat /proc/loadavg | awk '{print $1","$2","$3}')
 
-# Memory - used/total in MiB (binary), convert to GiB
-MEM_INFO=$(free -m | grep Mem)
-MEM_TOTAL_MB=$(echo $MEM_INFO | awk '{print $2}')
-MEM_USED_MB=$(echo $MEM_INFO | awk '{print $3}')
-MEM_TOTAL=$(awk "BEGIN {printf \"%.0f\", $MEM_TOTAL_MB / 1024}")
-MEM_USED=$(awk "BEGIN {printf \"%.0f\", $MEM_USED_MB / 1024}")
+# Memory - used/total in MiB (binary), convert to GiB using integer division
+MEM_INFO=$(free -m | awk '/^Mem:/ {print $2" "$3}')
+MEM_TOTAL_MB=$(echo "$MEM_INFO" | awk '{print $1}')
+MEM_USED_MB=$(echo "$MEM_INFO" | awk '{print $2}')
+MEM_TOTAL=$(( MEM_TOTAL_MB / 1024 ))
+MEM_USED=$(( MEM_USED_MB / 1024 ))
 
 # Disk - used/total in GB (find largest partition, excluding special filesystems)
 DISK_INFO=$(df -BG --output=size,used,target | \
     grep -v "^Size" | \
-    grep -v "/dev\|/sys\|/proc\|/run\|/boot\|/snap" | \
+    grep -v "/dev\\|/sys\\|/proc\\|/run\\|/boot\\|/snap" | \
     sort -h -r | \
     head -1)
 
@@ -163,15 +223,15 @@ if [ -z "$DISK_INFO" ]; then
     DISK_INFO=$(df -BG / | tail -1)
 fi
 
-DISK_TOTAL=$(echo $DISK_INFO | awk '{print $1}' | tr -d 'G')
-DISK_USED=$(echo $DISK_INFO | awk '{print $2}' | tr -d 'G')
+DISK_TOTAL=$(echo "$DISK_INFO" | awk '{print $1}' | tr -d 'G')
+DISK_USED=$(echo "$DISK_INFO" | awk '{print $2}' | tr -d 'G')
 
 # Temperature
 TEMP=0
 if [ -f /sys/class/thermal/thermal_zone0/temp ]; then
-    TEMP=$(($(cat /sys/class/thermal/thermal_zone0/temp) / 1000))
+    TEMP=$(( $(cat /sys/class/thermal/thermal_zone0/temp) / 1000 ))
 elif command -v sensors &> /dev/null; then
-    TEMP=$(sensors | grep -oP 'Core 0.*?\+\K[0-9]+' | head -1)
+    TEMP=$(sensors | grep -oP 'Core 0.*?\\+\\K[0-9]+' | head -1 || echo 0)
 fi
 TEMP=${TEMP:-0}
 
@@ -198,14 +258,14 @@ GPU_TEMP=0
 GPU_UTIL=0
 
 # Try NVIDIA first
-if command -v nvidia-smi &> /dev/null; then
+if command -v nvidia-smi &>/dev/null; then
     GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1 | cut -c1-20)
     GPU_TEMP=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader | head -1)
     GPU_UTIL=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits | head -1)
 # Try AMD
-elif command -v rocm-smi &> /dev/null; then
-    GPU_TEMP=$(rocm-smi --showtemp | grep -oP 'Temperature:.*?\K[0-9]+' | head -1)
-    GPU_UTIL=$(rocm-smi --showuse | grep -oP 'GPU use:.*?\K[0-9]+' | head -1)
+elif command -v rocm-smi &>/dev/null; then
+    GPU_TEMP=$(rocm-smi --showtemp | grep -oP 'Temperature:.*?\\K[0-9]+' | head -1)
+    GPU_UTIL=$(rocm-smi --showuse | grep -oP 'GPU use:.*?\\K[0-9]+' | head -1)
     GPU_NAME="AMD"
 # Try Intel
 elif [ -d /sys/class/drm/card0 ]; then
@@ -216,8 +276,8 @@ GPU_TEMP=${GPU_TEMP:-0}
 GPU_UTIL=${GPU_UTIL:-0}
 
 # Network throughput (KB/s)
-DEFAULT_IFACE=$(ip route | grep default | awk '{print $5}' | head -1)
-if [ -n "$DEFAULT_IFACE" ]; then
+DEFAULT_IFACE=$(ip route 2>/dev/null | awk '/default/ {print $5; exit}')
+if [ -n "$DEFAULT_IFACE" ] && [ -f "/sys/class/net/$DEFAULT_IFACE/statistics/rx_bytes" ]; then
     RX1=$(cat /sys/class/net/$DEFAULT_IFACE/statistics/rx_bytes 2>/dev/null || echo 0)
     TX1=$(cat /sys/class/net/$DEFAULT_IFACE/statistics/tx_bytes 2>/dev/null || echo 0)
     sleep 1
@@ -229,10 +289,10 @@ else
 fi
 
 # Connection type
-if command -v iwconfig &> /dev/null && iwconfig 2>/dev/null | grep -q "ESSID"; then
+if command -v iwconfig &>/dev/null && iwconfig 2>/dev/null | grep -q "ESSID"; then
     SSID=$(iwconfig 2>/dev/null | grep ESSID | awk -F'"' '{print $2}' | head -1)
     CONN="wifi:${SSID}"
-elif command -v nmcli &> /dev/null; then
+elif command -v nmcli &>/dev/null; then
     SSID=$(nmcli -t -f active,ssid dev wifi | grep '^yes' | cut -d: -f2)
     if [ -n "$SSID" ]; then
         CONN="wifi:${SSID}"
@@ -243,12 +303,12 @@ else
     CONN="lan"
 fi
 
-# IP Address
-IP=$(ip -4 addr show scope global | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
+# IP Address - prefer IPv4 global
+IP=$(ip -4 addr show scope global | grep -oP '(?<=inet\\s)\\d+(\\.\\d+){3}' | head -1)
 IP=${IP:-127.0.0.1}
 
 # Uptime in seconds
-UPTIME=$(cat /proc/uptime | awk '{print int($1)}')
+UPTIME=$(awk '{print int($1)}' /proc/uptime 2>/dev/null || echo 0)
 
 # Timestamp (Unix timestamp UTC)
 TIMESTAMP=$(date +%s)
@@ -268,26 +328,42 @@ if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
 else
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Error (HTTP $HTTP_CODE)"
 fi
-
 COLLECTOR
 
 sudo chmod +x collect.sh
 
-# Install dependencies
+# ----------------------------
+# Install dependencies logic
+# ----------------------------
 echo ""
 echo "Installing dependencies..."
-if command -v apt-get &> /dev/null; then
-    sudo apt-get update && sudo apt-get install -y jq curl bc
-elif command -v yum &> /dev/null; then
-    sudo yum install -y jq curl bc
-elif command -v dnf &> /dev/null; then
-    sudo dnf install -y jq curl bc
-elif command -v pacman &> /dev/null; then
-    sudo pacman -S --noconfirm jq curl bc
-elif command -v apk &> /dev/null; then
-    sudo apk add jq curl bc
+
+if is_steam_deck; then
+    echo "Steam Deck/SteamOS detected — skipping global package installation."
+    # Ensure local jq present
+    if ! command -v jq &>/dev/null; then
+        echo "Attempting to install jq to $HOME/.local/bin ..."
+        if install_jq_local; then
+            echo "jq installed locally."
+        else
+            echo "Warning: Failed to install jq locally. The collect script requires jq to run. Please install jq manually or enable network tools."
+        fi
+    fi
 else
-    echo "Warning: Please install manually: jq curl bc"
+    # Non-Steam systems: try package managers (best-effort)
+    if command -v apt-get &> /dev/null; then
+        sudo apt-get update && sudo apt-get install -y jq curl
+    elif command -v yum &> /dev/null; then
+        sudo yum install -y jq curl
+    elif command -v dnf &> /dev/null; then
+        sudo dnf install -y jq curl
+    elif command -v pacman &> /dev/null; then
+        sudo pacman -S --noconfirm jq curl
+    elif command -v apk &> /dev/null; then
+        sudo apk add jq curl
+    else
+        echo "Warning: Could not detect package manager. Please ensure 'jq' and 'curl' are installed."
+    fi
 fi
 
 # Calculate staggered timing based on hostname hash
@@ -297,29 +373,29 @@ SLOT=$((0x${HASH:0:8} % SLOTS))
 # Calculate schedule based on interval
 if [ $UPDATE_INTERVAL -eq 120 ]; then
     # Every 2 minutes
-    MINUTE_OFFSET=$((SLOT * 2))
+    MINUTE_OFFSET=$(( (SLOT * 2) % 60 ))
     SCHEDULE_DESC="every 2 minutes starting at :$MINUTE_OFFSET"
-    SYSTEMD_CALENDAR="*:00/2:00"
+    SYSTEMD_CALENDAR="*:$(printf "%02d" "$MINUTE_OFFSET")/2:00"
 elif [ $UPDATE_INTERVAL -eq 300 ]; then
     # Every 5 minutes
-    MINUTE_OFFSET=$((SLOT * 5))
+    MINUTE_OFFSET=$(( (SLOT * 5) % 60 ))
     SCHEDULE_DESC="every 5 minutes starting at :$MINUTE_OFFSET"
-    SYSTEMD_CALENDAR="*:00/5:00"
+    SYSTEMD_CALENDAR="*:$(printf "%02d" "$MINUTE_OFFSET")/5:00"
 elif [ $UPDATE_INTERVAL -eq 360 ]; then
     # Every 6 minutes
-    MINUTE_OFFSET=$((SLOT * 6))
+    MINUTE_OFFSET=$(( (SLOT * 6) % 60 ))
     SCHEDULE_DESC="every 6 minutes starting at :$MINUTE_OFFSET"
-    SYSTEMD_CALENDAR="*:00/6:00"
+    SYSTEMD_CALENDAR="*:$(printf "%02d" "$MINUTE_OFFSET")/6:00"
 elif [ $UPDATE_INTERVAL -eq 600 ]; then
     # Every 10 minutes
-    MINUTE_OFFSET=$((SLOT * 10))
+    MINUTE_OFFSET=$(( (SLOT * 10) % 60 ))
     SCHEDULE_DESC="every 10 minutes starting at :$MINUTE_OFFSET"
-    SYSTEMD_CALENDAR="*:00/10:00"
+    SYSTEMD_CALENDAR="*:$(printf "%02d" "$MINUTE_OFFSET")/10:00"
 else
-    # Every hour
-    MINUTE_OFFSET=$((SLOT * 5))
+    # Every hour (default)
+    MINUTE_OFFSET=$(( (SLOT * 5) % 60 ))
     SCHEDULE_DESC="every hour at :$MINUTE_OFFSET"
-    SYSTEMD_CALENDAR="*:$MINUTE_OFFSET:00"
+    SYSTEMD_CALENDAR="*:${MINUTE_OFFSET}:00"
 fi
 
 echo ""
@@ -365,23 +441,24 @@ Persistent=true
 WantedBy=timers.target
 EOF
 
-    # Set proper SELinux context for log directory
+    # Set proper SELinux context for log directory if semanage exists
     if command -v semanage &> /dev/null; then
         sudo semanage fcontext -a -t var_log_t "$LOG_DIR(/.*)?" 2>/dev/null || true
         sudo restorecon -R "$LOG_DIR" 2>/dev/null || true
     fi
 
     sudo systemctl daemon-reload
-    sudo systemctl enable trmnl-health.timer
-    sudo systemctl start trmnl-health.timer
+    sudo systemctl enable trmnl-health.timer || true
+    sudo systemctl start trmnl-health.timer || true
 
-    echo "✓ Installed as systemd service"
+    echo "✓ Installed as systemd service (if permitted)"
     echo "  Check status: sudo systemctl status trmnl-health.timer"
     echo "  View logs: sudo tail -f $LOG_DIR/trmnl-health.log"
     echo ""
 else
     # Fallback to cron
-    CRON_SCHEDULE="*/$((UPDATE_INTERVAL/60)) * * * * $INSTALL_DIR/collect.sh >> $LOG_DIR/trmnl-health.log 2>&1"
+    CRON_MINUTES=$(( UPDATE_INTERVAL / 60 ))
+    CRON_SCHEDULE="*/$CRON_MINUTES * * * * $INSTALL_DIR/collect.sh >> $LOG_DIR/trmnl-health.log 2>&1"
     (sudo crontab -l 2>/dev/null | grep -v "trmnl-health"; echo "$CRON_SCHEDULE") | sudo crontab -
     echo "✓ Installed as cron job"
     echo "  Logs: $LOG_DIR/trmnl-health.log"
@@ -391,7 +468,13 @@ fi
 # Test run
 echo "Running test collection..."
 echo ""
-sudo $INSTALL_DIR/collect.sh
+# Run as current user but script uses system config; allow sudo to run collect if needed
+if is_steam_deck; then
+    # On Steam Deck, run as the current user (jq installed locally)
+    bash "$INSTALL_DIR/collect.sh"
+else
+    sudo bash "$INSTALL_DIR/collect.sh" || bash "$INSTALL_DIR/collect.sh"
+fi
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "✓ Installation complete!"
